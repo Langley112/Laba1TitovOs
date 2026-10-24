@@ -1,0 +1,19 @@
+# Каталог сборки CMake
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+
+# Собранные исполняемые файлы в корне проекта
+/program_a
+/program_b
+/program_c
+
+# Журналы, создаваемые программами
+*.log
+
+# Настройки IDE
+.vscode/
+.idea/
