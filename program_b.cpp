@@ -20,8 +20,7 @@ constexpr const char* fifo_path = "/tmp/program_a_fifo";
 constexpr const char* terminal_path = "/usr/bin/ptyxis";
 
 bool is_supported_color(const std::string& color) {
-    return color == "red" || color == "green" || color == "blue" ||
-           color == "yellow" || color == "magenta";
+    return color == "red" || color == "green" || color == "blue";
 }
 
 bool parse_size(const std::string& value, int& size) {
@@ -53,7 +52,7 @@ bool read_parameters(Parameters& parameters) {
     if (!std::getline(std::cin, text)) {
         return false;
     }
-    std::cout << "Цвет (red, green, blue, yellow, magenta): " << std::flush;
+    std::cout << "Цвет (red, green, blue): " << std::flush;
     if (!std::getline(std::cin, color)) {
         return false;
     }
@@ -194,8 +193,8 @@ void launch_program_a(const Parameters& parameters, pid_t& terminal_pid,
 bool is_supported_command(const std::string& command) {
     if (command.size() == 5 && command.compare(0, 4, "key=") == 0) {
         const char key = command[4];
-        return key == '1' || key == '2' || key == '3' || key == '4' ||
-               key == '+' || key == 't' || key == 'q';
+        return key == 'r' || key == 'g' || key == 'b' ||
+               key == '+' || key == 'q';
     }
 
     const std::string prefix = "cmd=color:";
@@ -251,7 +250,7 @@ void send_command(const std::string& command) {
 }
 
 bool prompt_and_send_command() {
-    std::cout << "Команда (например, key=1 или cmd=color:blue): " << std::flush;
+    std::cout << "Команда (например, key=r или cmd=color:blue): " << std::flush;
     std::string command;
     if (!std::getline(std::cin, command)) {
         return false;

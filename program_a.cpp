@@ -16,9 +16,7 @@
 enum class Color {
     Red,
     Green,
-    Blue,
-    Yellow,
-    Magenta
+    Blue
 };
 
 struct ProgramState {
@@ -42,10 +40,6 @@ bool parse_color(const std::string& name, Color& color) {
         color = Color::Green;
     } else if (name == "blue") {
         color = Color::Blue;
-    } else if (name == "yellow") {
-        color = Color::Yellow;
-    } else if (name == "magenta") {
-        color = Color::Magenta;
     } else {
         return false;
     }
@@ -57,8 +51,6 @@ const char* color_name(Color color) {
         case Color::Red: return "red";
         case Color::Green: return "green";
         case Color::Blue: return "blue";
-        case Color::Yellow: return "yellow";
-        case Color::Magenta: return "magenta";
     }
     return "green";
 }
@@ -68,8 +60,6 @@ const char* color_code(Color color) {
         case Color::Red: return "\033[31m";
         case Color::Green: return "\033[32m";
         case Color::Blue: return "\033[34m";
-        case Color::Yellow: return "\033[33m";
-        case Color::Magenta: return "\033[35m";
     }
     return "\033[32m";
 }
@@ -78,9 +68,7 @@ Color next_color(Color color) {
     switch (color) {
         case Color::Red: return Color::Green;
         case Color::Green: return Color::Blue;
-        case Color::Blue: return Color::Yellow;
-        case Color::Yellow: return Color::Magenta;
-        case Color::Magenta: return Color::Red;
+        case Color::Blue: return Color::Red;
     }
     return Color::Green;
 }
@@ -144,12 +132,10 @@ void draw_text(const ProgramState& state) {
 
 bool apply_key(char key, ProgramState& state) {
     switch (key) {
-        case '1': state.color = Color::Red; break;
-        case '2': state.color = Color::Green; break;
-        case '3': state.color = Color::Blue; break;
-        case '4': state.color = Color::Yellow; break;
+        case 'r': state.color = Color::Red; break;
+        case 'g': state.color = Color::Green; break;
+        case 'b': state.color = Color::Blue; break;
         case '+': state.color = next_color(state.color); break;
-        case 't': state.color = Color::Magenta; break;
         case 'q': state.running = false; break;
         default: return false;
     }

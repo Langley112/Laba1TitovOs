@@ -180,7 +180,7 @@ bool attach_to_program_a(pid_t pid, MonitoredProgram& program,
     return true;
 }
 
-bool send_key_t(const std::string& program_path, pid_t expected_pid,
+bool send_key_b(const std::string& program_path, pid_t expected_pid,
                 std::string& error) {
     const std::vector<pid_t> matches = find_program_a_processes(program_path);
     if (matches.size() != 1 || matches[0] != expected_pid) {
@@ -200,7 +200,7 @@ bool send_key_t(const std::string& program_path, pid_t expected_pid,
         return false;
     }
 
-    constexpr char command[] = "key=t\n";
+    constexpr char command[] = "key=b\n";
     ssize_t written;
     do {
         written = write(fifo_fd, command, sizeof(command) - 1);
@@ -250,14 +250,14 @@ void handle_a_log_line(const std::string& line, MonitoredProgram& program,
         write_event(own_log, timestamp, event + " pid=" + std::to_string(program.pid));
         if (event[4] == '+') {
             std::string error;
-            if (send_key_t(program_path, program.pid, error)) {
+            if (send_key_b(program_path, program.pid, error)) {
                 write_event(own_log, current_timestamp(),
-                            "injected key=t pid=" + std::to_string(program.pid));
+                            "injected key=b pid=" + std::to_string(program.pid));
             } else {
                 write_event(own_log, current_timestamp(),
-                            "failed to inject key=t pid=" + std::to_string(program.pid) +
+                            "failed to inject key=b pid=" + std::to_string(program.pid) +
                             " reason=" + error);
-                std::cerr << "Не удалось отправить key=t: " << error << '\n';
+                std::cerr << "Не удалось отправить key=b: " << error << '\n';
             }
         }
     } else if (event.compare(0, 10, "cmd=color:") == 0) {
