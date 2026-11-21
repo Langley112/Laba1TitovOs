@@ -26,16 +26,16 @@ struct ProgramState {
 constexpr const char* fifo_path = "/tmp/program_a_fifo";
 volatile sig_atomic_t stop_requested = 0;
 
-void stop_program(int) {
+void stop_program(int /* signal_number */) {
     stop_requested = 1;
 }
 
-bool read_color(const std::string& name, Color& color) {
-    if (name == "red") {
+bool read_color(const std::string& color_text, Color& color) {
+    if (color_text == "red") {
         color = Color::Red;
-    } else if (name == "green") {
+    } else if (color_text == "green") {
         color = Color::Green;
-    } else if (name == "blue") {
+    } else if (color_text == "blue") {
         color = Color::Blue;
     } else {
         return false;
@@ -61,20 +61,20 @@ const char* color_code(Color color) {
     return "\033[32m";
 }
 
-bool read_args(int argc, char* argv[], ProgramState& state) {
-    for (int i = 1; i < argc; i += 2) {
-        if (i + 1 >= argc) {
-            std::cerr << "Отсутствует значение для " << argv[i] << '\n';
+bool read_args(int argument_count, char* arguments[], ProgramState& program_state) {
+    for (int argument_index = 1; argument_index < argument_count; argument_index += 2) {
+        if (argument_index + 1 >= argument_count) {
+            std::cerr << "Отсутствует значение для " << arguments[argument_index] << '\n';
             return false;
         }
 
-        const std::string option = argv[i];
-        const std::string value = argv[i + 1];
+        const std::string option = arguments[argument_index];
+        const std::string value = arguments[argument_index + 1];
 
         if (option == "--text") {
-            state.text = value;
+            program_state.text = value;
         } else if (option == "--color") {
-            if (!read_color(value, state.color)) {
+            if (!read_color(value, program_state.color)) {
                 std::cerr << "Неизвестный цвет: " << value << '\n';
                 return false;
             }
@@ -86,53 +86,53 @@ bool read_args(int argc, char* argv[], ProgramState& state) {
     return true;
 }
 
-void write_log(std::ofstream& log, const std::string& event) {
+void write_log(std::ofstream& log_file, const std::string& event) {
     std::time_t now = std::time(nullptr);
     std::tm local_time{};
     localtime_r(&now, &local_time);
 
     char timestamp[20];
     std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_time);
-    log << timestamp << ' ' << event << '\n';
-    log.flush();
+    log_file << timestamp << ' ' << event << '\n';
+    log_file.flush();
 }
 
-void draw_text(const ProgramState& state) {
-    std::cout << "\033[2J\033[H" << color_code(state.color);
-    std::cout << state.text;
+void draw_text(const ProgramState& program_state) {
+    std::cout << "\033[2J\033[H" << color_code(program_state.color);
+    std::cout << program_state.text;
     std::cout << "\033[0m\n" << std::flush;
 }
 
-bool use_key(char key, ProgramState& state) {
+bool use_key(char key, ProgramState& program_state) {
     switch (key) {
-        case 'r': state.color = Color::Red; break;
-        case 'g': state.color = Color::Green; break;
-        case 'b': state.color = Color::Blue; break;
-        case 'q': state.running = false; break;
+        case 'r': program_state.color = Color::Red; break;
+        case 'g': program_state.color = Color::Green; break;
+        case 'b': program_state.color = Color::Blue; break;
+        case 'q': program_state.running = false; break;
         default: return false;
     }
     return true;
 }
 
-void run_key(char key, ProgramState& state, std::ofstream& log) {
-    const Color old_color = state.color;
-    if (!use_key(key, state)) {
+void run_key(char key, ProgramState& program_state, std::ofstream& log_file) {
+    const Color old_color = program_state.color;
+    if (!use_key(key, program_state)) {
         return;
     }
 
-    write_log(log, std::string("key=") + key + " color=" + color_name(state.color));
-    if (state.running && state.color != old_color) {
-        draw_text(state);
+    write_log(log_file, std::string("key=") + key + " color=" + color_name(program_state.color));
+    if (program_state.running && program_state.color != old_color) {
+        draw_text(program_state);
     }
 }
 
-void run_fifo_command(std::string line, ProgramState& state, std::ofstream& log) {
+void run_fifo_command(std::string line, ProgramState& program_state, std::ofstream& log_file) {
     if (!line.empty() && line.back() == '\r') {
         line.pop_back();
     }
 
     if (line.size() == 5 && line.compare(0, 4, "key=") == 0) {
-        run_key(line[4], state, log);
+        run_key(line[4], program_state, log_file);
         return;
     }
 
@@ -146,16 +146,16 @@ void run_fifo_command(std::string line, ProgramState& state, std::ofstream& log)
         return;
     }
 
-    const Color old_color = state.color;
-    state.color = color;
-    write_log(log, std::string("cmd=color:") + color_name(color) +
-                   " color=" + color_name(state.color));
-    if (state.color != old_color) {
-        draw_text(state);
+    const Color old_color = program_state.color;
+    program_state.color = color;
+    write_log(log_file, std::string("cmd=color:") + color_name(color) +
+                   " color=" + color_name(program_state.color));
+    if (program_state.color != old_color) {
+        draw_text(program_state);
     }
 }
 
-bool make_fifo(bool& created) {
+bool make_fifo(bool& fifo_created) {
     struct stat info {};
     if (lstat(fifo_path, &info) == 0) {
         if (!S_ISFIFO(info.st_mode)) {
@@ -170,7 +170,7 @@ bool make_fifo(bool& created) {
     }
 
     if (mkfifo(fifo_path, 0600) == 0) {
-        created = true;
+        fifo_created = true;
         return true;
     }
     if (errno == EEXIST && lstat(fifo_path, &info) == 0 && S_ISFIFO(info.st_mode)) {
@@ -180,26 +180,26 @@ bool make_fifo(bool& created) {
     return false;
 }
 
-int open_fifo(bool& created) {
-    if (!make_fifo(created)) {
+int open_fifo(bool& fifo_created) {
+    if (!make_fifo(fifo_created)) {
         return -1;
     }
 
     // O_RDWR не даёт FIFO закрыться, пока нет внешнего отправителя.
     // O_NONBLOCK позволяет читать без ожидания следующей команды.
-    const int fifo_fd = open(fifo_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
-    if (fifo_fd < 0) {
+    const int fifo_file_descriptor = open(fifo_path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (fifo_file_descriptor < 0) {
         std::perror("open FIFO");
-        if (created) {
+        if (fifo_created) {
             unlink(fifo_path);
         }
     }
-    return fifo_fd;
+    return fifo_file_descriptor;
 }
 
-void close_fifo(int fifo_fd, bool created) {
-    close(fifo_fd);
-    if (created) {
+void close_fifo(int fifo_file_descriptor, bool fifo_created) {
+    close(fifo_file_descriptor);
+    if (fifo_created) {
         unlink(fifo_path);
     }
 }
@@ -243,11 +243,11 @@ bool set_signal_handlers() {
     return true;
 }
 
-bool read_key(ProgramState& state, std::ofstream& log) {
+bool read_key(ProgramState& program_state, std::ofstream& log_file) {
     char key;
     const ssize_t count = read(STDIN_FILENO, &key, 1);
     if (count == 1) {
-        run_key(key, state, log);
+        run_key(key, program_state, log_file);
         return true;
     }
     if (count < 0 && errno == EINTR) {
@@ -261,25 +261,25 @@ bool read_key(ProgramState& state, std::ofstream& log) {
     return false;
 }
 
-void run_fifo_lines(std::string& line_part, ProgramState& state, std::ofstream& log) {
+void run_fifo_lines(std::string& line_part, ProgramState& program_state, std::ofstream& log_file) {
     // FIFO может передать несколько строк сразу или только часть одной строки.
     std::size_t line_end = line_part.find('\n');
-    while (line_end != std::string::npos && state.running) {
+    while (line_end != std::string::npos && program_state.running) {
         const std::string line = line_part.substr(0, line_end);
         line_part.erase(0, line_end + 1);
-        run_fifo_command(line, state, log);
+        run_fifo_command(line, program_state, log_file);
         line_end = line_part.find('\n');
     }
 }
 
-bool read_fifo(int fifo_fd, std::string& line_part,
-               ProgramState& state, std::ofstream& log) {
+bool read_fifo(int fifo_file_descriptor, std::string& line_part,
+               ProgramState& program_state, std::ofstream& log_file) {
     char buffer[256];
-    while (state.running && !stop_requested) {
-        const ssize_t bytes_read = read(fifo_fd, buffer, sizeof(buffer));
+    while (program_state.running && !stop_requested) {
+        const ssize_t bytes_read = read(fifo_file_descriptor, buffer, sizeof(buffer));
         if (bytes_read > 0) {
             line_part.append(buffer, static_cast<std::size_t>(bytes_read));
-            run_fifo_lines(line_part, state, log);
+            run_fifo_lines(line_part, program_state, log_file);
             continue;
         }
         if (bytes_read < 0 && errno == EINTR) {
@@ -299,14 +299,14 @@ bool read_fifo(int fifo_fd, std::string& line_part,
     return true;
 }
 
-bool run_program(int fifo_fd, ProgramState& state, std::ofstream& log) {
+bool run_program(int fifo_file_descriptor, ProgramState& program_state, std::ofstream& log_file) {
     std::string line_part;
     pollfd inputs[2] = {
         {STDIN_FILENO, POLLIN, 0},
-        {fifo_fd, POLLIN, 0}
+        {fifo_file_descriptor, POLLIN, 0}
     };
 
-    while (state.running && !stop_requested) {
+    while (program_state.running && !stop_requested) {
         // poll(-1) спит до появления события на клавиатуре или в FIFO.
         const int ready = poll(inputs, 2, -1);
         if (ready < 0) {
@@ -325,48 +325,48 @@ bool run_program(int fifo_fd, ProgramState& state, std::ofstream& log) {
             std::cerr << "Ошибка ожидания FIFO\n";
             return false;
         }
-        if ((inputs[0].revents & POLLIN) && !read_key(state, log)) {
+        if ((inputs[0].revents & POLLIN) && !read_key(program_state, log_file)) {
             return false;
         }
-        if (state.running && (inputs[1].revents & POLLIN) &&
-            !read_fifo(fifo_fd, line_part, state, log)) {
+        if (program_state.running && (inputs[1].revents & POLLIN) &&
+            !read_fifo(fifo_file_descriptor, line_part, program_state, log_file)) {
             return false;
         }
     }
     return true;
 }
 
-int main(int argc, char* argv[]) {
-    ProgramState state;
-    if (!read_args(argc, argv, state)) {
+int main(int argument_count, char* arguments[]) {
+    ProgramState program_state;
+    if (!read_args(argument_count, arguments, program_state)) {
         return 1;
     }
 
-    std::ofstream log("program_a.log", std::ios::app);
-    if (!log) {
+    std::ofstream log_file("program_a.log", std::ios::app);
+    if (!log_file) {
         std::cerr << "Не удалось открыть program_a.log\n";
         return 1;
     }
 
     bool fifo_created = false;
-    const int fifo_fd = open_fifo(fifo_created);
-    if (fifo_fd < 0) {
+    const int fifo_file_descriptor = open_fifo(fifo_created);
+    if (fifo_file_descriptor < 0) {
         return 1;
     }
 
     termios old_terminal{};
     if (!set_signal_handlers() || !start_keyboard(old_terminal)) {
-        close_fifo(fifo_fd, fifo_created);
+        close_fifo(fifo_file_descriptor, fifo_created);
         return 1;
     }
 
-    write_log(log, std::string("start color=") + color_name(state.color));
-    draw_text(state);
-    const bool success = run_program(fifo_fd, state, log);
-    write_log(log, "exit");
+    write_log(log_file, std::string("start color=") + color_name(program_state.color));
+    draw_text(program_state);
+    const bool success = run_program(fifo_file_descriptor, program_state, log_file);
+    write_log(log_file, "exit");
 
     std::cout << "\033[0m" << std::flush;
     const bool terminal_restored = restore_keyboard(old_terminal);
-    close_fifo(fifo_fd, fifo_created);
+    close_fifo(fifo_file_descriptor, fifo_created);
     return success && terminal_restored ? 0 : 1;
 }

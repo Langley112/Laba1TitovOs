@@ -27,11 +27,11 @@ bool a_is_running() {
         return false;
     }
 
-    const int fifo_fd = open(fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-    if (fifo_fd < 0) {
+    const int fifo_file_descriptor = open(fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fifo_file_descriptor < 0) {
         return false;
     }
-    ::close(fifo_fd);
+    ::close(fifo_file_descriptor);
     return true;
 }
 
@@ -162,8 +162,8 @@ private:
         }
 
         // O_NONBLOCK не позволяет окну зависнуть, если A не читает канал.
-        const int fifo_fd = open(fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-        if (fifo_fd < 0) {
+        const int fifo_file_descriptor = open(fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fifo_file_descriptor < 0) {
             if (errno == ENOENT || errno == ENXIO) {
                 status->setText("Программа A не запущена или уже завершилась.");
             } else {
@@ -176,9 +176,9 @@ private:
         const QByteArray line = command + '\n';
         ssize_t bytes_written;
         do {
-            bytes_written = write(fifo_fd, line.constData(), static_cast<size_t>(line.size()));
+            bytes_written = write(fifo_file_descriptor, line.constData(), static_cast<size_t>(line.size()));
         } while (bytes_written < 0 && errno == EINTR);
-        ::close(fifo_fd);
+        ::close(fifo_file_descriptor);
 
         if (bytes_written == line.size()) {
             status->setText("Команда отправлена.");
@@ -194,12 +194,12 @@ private:
     int checks_left = 0;
 };
 
-int main(int argc, char* argv[]) {
+int main(int argument_count, char* arguments[]) {
     if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
         return 1;
     }
 
-    QApplication app(argc, argv);
+    QApplication app(argument_count, arguments);
     ProgramBWindow window;
     window.show();
     return app.exec();
