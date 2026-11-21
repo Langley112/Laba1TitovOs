@@ -1,14 +1,11 @@
 #include <cerrno>
 #include <cctype>
 #include <climits>
-#include <csignal>
 #include <cstdlib>
 #include <cstdio>
-#include <cstring>
 #include <ctime>
 #include <chrono>
 #include <dirent.h>
-#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <poll.h>
@@ -18,30 +15,28 @@
 #include <unistd.h>
 #include <vector>
 
-struct MonitoredProgram {
+struct AInfo {
     pid_t pid = -1;
     std::string log_path;
-    std::streamoff next_offset = 0;
-    bool start_logged = false;
-    bool exit_logged = false;
-    bool missing_log_reported = false;
+    std::streamoff log_pos = 0;
+    bool start_saved = false;
+    bool exit_saved = false;
+    bool log_error_shown = false;
 };
 
-constexpr const char* fifo_path = "/tmp/program_a_fifo";
-
-std::string current_timestamp() {
+std::string time_now() {
     const std::time_t now = std::time(nullptr);
     std::tm local_time {};
     localtime_r(&now, &local_time);
 
-    char timestamp[20];
-    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &local_time);
-    return timestamp;
+    char time[20];
+    std::strftime(time, sizeof(time), "%Y-%m-%d %H:%M:%S", &local_time);
+    return time;
 }
 
-void write_event(std::ofstream& log, const std::string& timestamp,
+void write_event(std::ofstream& log, const std::string& time,
                  const std::string& event) {
-    log << timestamp << ' ' << event << '\n';
+    log << time << ' ' << event << '\n';
     log.flush();
 }
 
@@ -56,19 +51,19 @@ bool read_link(const std::string& path, std::string& target) {
     return true;
 }
 
-std::string companion_program_a_path() {
-    std::string self_path;
-    if (!read_link("/proc/self/exe", self_path)) {
+std::string get_a_path() {
+    std::string own_path;
+    if (!read_link("/proc/self/exe", own_path)) {
         return {};
     }
-    const std::size_t separator = self_path.find_last_of('/');
-    if (separator == std::string::npos) {
+    const std::size_t slash = own_path.find_last_of('/');
+    if (slash == std::string::npos) {
         return {};
     }
-    return self_path.substr(0, separator + 1) + "program_a";
+    return own_path.substr(0, slash + 1) + "program_a";
 }
 
-bool is_program_a_process(pid_t pid, const struct stat& expected_binary) {
+bool is_a_process(pid_t pid, const struct stat& a_file) {
     const std::string proc_path = "/proc/" + std::to_string(pid);
 
     std::ifstream comm_file(proc_path + "/comm");
@@ -78,61 +73,61 @@ bool is_program_a_process(pid_t pid, const struct stat& expected_binary) {
     }
 
     std::ifstream cmdline_file(proc_path + "/cmdline", std::ios::binary);
-    std::string first_argument;
-    if (!std::getline(cmdline_file, first_argument, '\0')) {
+    std::string first_arg;
+    if (!std::getline(cmdline_file, first_arg, '\0')) {
         return false;
     }
-    const std::size_t separator = first_argument.find_last_of('/');
-    if (first_argument.substr(separator + 1) != "program_a") {
+    const std::size_t slash = first_arg.find_last_of('/');
+    if (first_arg.substr(slash + 1) != "program_a") {
         return false;
     }
 
-    struct stat actual_binary {};
-    if (stat((proc_path + "/exe").c_str(), &actual_binary) != 0) {
+    struct stat process_file {};
+    if (stat((proc_path + "/exe").c_str(), &process_file) != 0) {
         return false;
     }
-    return actual_binary.st_dev == expected_binary.st_dev &&
-           actual_binary.st_ino == expected_binary.st_ino;
+    return process_file.st_dev == a_file.st_dev &&
+           process_file.st_ino == a_file.st_ino;
 }
 
-std::vector<pid_t> find_program_a_processes(const std::string& program_path) {
-    std::vector<pid_t> matches;
-    struct stat expected_binary {};
-    if (stat(program_path.c_str(), &expected_binary) != 0) {
-        return matches;
+std::vector<pid_t> find_a_processes(const std::string& a_path) {
+    std::vector<pid_t> a_pids;
+    struct stat a_file {};
+    if (stat(a_path.c_str(), &a_file) != 0) {
+        return a_pids;
     }
 
-    DIR* proc_directory = opendir("/proc");
-    if (proc_directory == nullptr) {
+    DIR* proc_dir = opendir("/proc");
+    if (proc_dir == nullptr) {
         std::perror("Не удалось открыть /proc");
-        return matches;
+        return a_pids;
     }
 
     dirent* entry;
-    while ((entry = readdir(proc_directory)) != nullptr) {
+    while ((entry = readdir(proc_dir)) != nullptr) {
         if (!std::isdigit(static_cast<unsigned char>(entry->d_name[0]))) {
             continue;
         }
         const pid_t pid = static_cast<pid_t>(std::strtol(entry->d_name, nullptr, 10));
-        if (is_program_a_process(pid, expected_binary)) {
-            matches.push_back(pid);
+        if (is_a_process(pid, a_file)) {
+            a_pids.push_back(pid);
         }
     }
-    closedir(proc_directory);
-    return matches;
+    closedir(proc_dir);
+    return a_pids;
 }
 
-bool split_a_log_line(const std::string& line, std::string& timestamp,
-                      std::string& event) {
+bool split_log_line(const std::string& line, std::string& time,
+                    std::string& event) {
     if (line.size() < 21 || line[19] != ' ') {
         return false;
     }
-    timestamp = line.substr(0, 19);
+    time = line.substr(0, 19);
     event = line.substr(20);
     return true;
 }
 
-void read_existing_start(MonitoredProgram& program, std::ofstream& own_log) {
+void read_old_start(AInfo& program, std::ofstream& c_log) {
     std::ifstream input(program.log_path, std::ios::binary);
     if (!input) {
         return;
@@ -144,171 +139,121 @@ void read_existing_start(MonitoredProgram& program, std::ofstream& own_log) {
         if (input.eof()) {
             break; // Незавершённую строку прочитаем после появления символа новой строки.
         }
-        program.next_offset = static_cast<std::streamoff>(input.tellg());
+        program.log_pos = static_cast<std::streamoff>(input.tellg());
 
-        std::string timestamp;
+        std::string time;
         std::string event;
-        if (!split_a_log_line(line, timestamp, event)) {
+        if (!split_log_line(line, time, event)) {
             continue;
         }
         if (event.compare(0, 6, "start ") == 0) {
-            last_start = timestamp;
+            last_start = time;
         } else if (event == "exit") {
             last_start.clear();
         }
     }
 
     if (!last_start.empty()) {
-        write_event(own_log, last_start,
+        write_event(c_log, last_start,
                     "program_a started pid=" + std::to_string(program.pid));
-        program.start_logged = true;
+        program.start_saved = true;
     }
 }
 
-bool attach_to_program_a(pid_t pid, MonitoredProgram& program,
-                         std::ofstream& own_log) {
-    std::string working_directory;
-    if (!read_link("/proc/" + std::to_string(pid) + "/cwd", working_directory)) {
+bool watch_a(pid_t pid, AInfo& program, std::ofstream& c_log) {
+    std::string work_dir;
+    if (!read_link("/proc/" + std::to_string(pid) + "/cwd", work_dir)) {
         return false;
     }
 
-    program = MonitoredProgram {};
+    program = AInfo {};
     program.pid = pid;
-    program.log_path = working_directory + "/program_a.log";
-    read_existing_start(program, own_log);
+    program.log_path = work_dir + "/program_a.log";
+    read_old_start(program, c_log);
     std::cout << "Найдена программа A, PID " << pid << ".\n";
     return true;
 }
 
-bool send_key_b(const std::string& program_path, pid_t expected_pid,
-                std::string& error) {
-    const std::vector<pid_t> matches = find_program_a_processes(program_path);
-    if (matches.size() != 1 || matches[0] != expected_pid) {
-        error = "программа A завершилась или найдено несколько экземпляров";
-        return false;
-    }
-
-    struct stat fifo_info {};
-    if (lstat(fifo_path, &fifo_info) != 0 || !S_ISFIFO(fifo_info.st_mode)) {
-        error = "FIFO отсутствует или недоступен";
-        return false;
-    }
-
-    const int fifo_fd = open(fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
-    if (fifo_fd < 0) {
-        error = std::string("не удалось открыть FIFO: ") + std::strerror(errno);
-        return false;
-    }
-
-    constexpr char command[] = "key=b\n";
-    ssize_t written;
-    do {
-        written = write(fifo_fd, command, sizeof(command) - 1);
-    } while (written < 0 && errno == EINTR);
-    const int write_error = errno;
-    close(fifo_fd);
-
-    if (written != static_cast<ssize_t>(sizeof(command) - 1)) {
-        error = written < 0 ? std::strerror(write_error) : "неполная запись в FIFO";
-        return false;
-    }
-    return true;
-}
-
-void handle_a_log_line(const std::string& line, MonitoredProgram& program,
-                       const std::string& program_path, std::ofstream& own_log) {
-    std::string timestamp;
+void save_a_event(const std::string& line, AInfo& program,
+                  std::ofstream& c_log) {
+    std::string time;
     std::string event;
-    if (!split_a_log_line(line, timestamp, event)) {
+    if (!split_log_line(line, time, event)) {
         return;
     }
 
     if (event.compare(0, 6, "start ") == 0) {
-        if (!program.start_logged) {
-            write_event(own_log, timestamp,
+        if (!program.start_saved) {
+            write_event(c_log, time,
                         "program_a started pid=" + std::to_string(program.pid));
-            program.start_logged = true;
+            program.start_saved = true;
         }
         return;
     }
 
     if (event == "exit") {
-        if (!program.exit_logged) {
-            write_event(own_log, timestamp,
+        if (!program.exit_saved) {
+            write_event(c_log, time,
                         "program_a exited pid=" + std::to_string(program.pid));
-            program.exit_logged = true;
+            program.exit_saved = true;
         }
         return;
     }
 
-    if (program.exit_logged) {
+    if (program.exit_saved) {
         return;
     }
 
-    if (event.size() >= 5 && event.compare(0, 4, "key=") == 0 &&
-        (event.size() == 5 || event[5] == ' ')) {
-        write_event(own_log, timestamp, event + " pid=" + std::to_string(program.pid));
-        if (event[4] == '+') {
-            std::string error;
-            if (send_key_b(program_path, program.pid, error)) {
-                write_event(own_log, current_timestamp(),
-                            "injected key=b pid=" + std::to_string(program.pid));
-            } else {
-                write_event(own_log, current_timestamp(),
-                            "failed to inject key=b pid=" + std::to_string(program.pid) +
-                            " reason=" + error);
-                std::cerr << "Не удалось отправить key=b: " << error << '\n';
-            }
-        }
-    } else if (event.compare(0, 10, "cmd=color:") == 0) {
-        write_event(own_log, timestamp, event + " pid=" + std::to_string(program.pid));
+    const bool key_event = event.size() >= 5 && event.compare(0, 4, "key=") == 0 &&
+                           (event.size() == 5 || event[5] == ' ');
+    const bool color_event = event.compare(0, 10, "cmd=color:") == 0;
+    if (key_event || color_event) {
+        write_event(c_log, time, event + " pid=" + std::to_string(program.pid));
     }
 }
 
-void read_new_a_log_lines(MonitoredProgram& program,
-                          const std::string& program_path, std::ofstream& own_log) {
+void read_new_log(AInfo& program, std::ofstream& c_log) {
     struct stat log_info {};
     if (stat(program.log_path.c_str(), &log_info) != 0) {
-        if (!program.missing_log_reported) {
+        if (!program.log_error_shown) {
             std::cout << "Ожидание журнала " << program.log_path << ".\n";
-            program.missing_log_reported = true;
+            program.log_error_shown = true;
         }
         return;
     }
-    program.missing_log_reported = false;
-    if (log_info.st_size < program.next_offset) {
-        program.next_offset = 0;
+    program.log_error_shown = false;
+    if (log_info.st_size < program.log_pos) {
+        program.log_pos = 0;
     }
 
     std::ifstream input(program.log_path, std::ios::binary);
     if (!input) {
         return;
     }
-    input.seekg(program.next_offset);
+    input.seekg(program.log_pos);
 
     std::string line;
     while (std::getline(input, line)) {
         if (input.eof()) {
             break; // Не обрабатываем строку, пока A не допишет перевод строки.
         }
-        program.next_offset = static_cast<std::streamoff>(input.tellg());
-        handle_a_log_line(line, program, program_path, own_log);
+        program.log_pos = static_cast<std::streamoff>(input.tellg());
+        save_a_event(line, program, c_log);
     }
 }
 
-void finish_monitoring(MonitoredProgram& program,
-                       const std::string& program_path, std::ofstream& own_log) {
-    read_new_a_log_lines(program, program_path, own_log);
-    if (!program.exit_logged) {
-        write_event(own_log, current_timestamp(),
+void stop_watch(AInfo& program, std::ofstream& c_log) {
+    read_new_log(program, c_log);
+    if (!program.exit_saved) {
+        write_event(c_log, time_now(),
                     "program_a disappearance detected pid=" + std::to_string(program.pid) +
                     " (no exit record)");
     }
     std::cout << "Программа A завершилась. Ожидание следующего запуска.\n";
-    program = MonitoredProgram {};
+    program = AInfo {};
 }
 
-bool user_requested_exit() {
+bool wants_exit() {
     pollfd input {STDIN_FILENO, POLLIN, 0};
     const int result = poll(&input, 1, 0);
     if (result <= 0) {
@@ -331,62 +276,57 @@ bool user_requested_exit() {
 }
 
 int main() {
-    if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
-        std::perror("Не удалось настроить SIGPIPE");
-        return 1;
-    }
-
-    const std::string program_path = companion_program_a_path();
-    if (program_path.empty()) {
+    const std::string a_path = get_a_path();
+    if (a_path.empty()) {
         std::cerr << "Не удалось определить путь к программе A.\n";
         return 1;
     }
 
-    std::ofstream own_log("program_c.log", std::ios::app);
-    if (!own_log) {
+    std::ofstream c_log("program_c.log", std::ios::app);
+    if (!c_log) {
         std::cerr << "Не удалось открыть program_c.log.\n";
         return 1;
     }
 
-    MonitoredProgram program;
-    bool ambiguity_reported = false;
-    bool waiting_reported = false;
+    AInfo program;
+    bool many_a_shown = false;
+    bool wait_shown = false;
     std::cout << "Программа C запущена. Для выхода введите q и нажмите Enter.\n";
 
     while (true) {
-        if (user_requested_exit()) {
+        if (wants_exit()) {
             break;
         }
 
-        const std::vector<pid_t> matches = find_program_a_processes(program_path);
-        if (matches.size() > 1) {
-            if (!ambiguity_reported) {
+        const std::vector<pid_t> a_pids = find_a_processes(a_path);
+        if (a_pids.size() > 1) {
+            if (!many_a_shown) {
                 std::cerr << "Найдено несколько программ A. Мониторинг приостановлен.\n";
-                write_event(own_log, current_timestamp(),
+                write_event(c_log, time_now(),
                             "multiple program_a processes; monitoring paused");
-                ambiguity_reported = true;
+                many_a_shown = true;
             }
-            program = MonitoredProgram {};
-            waiting_reported = false;
-        } else if (matches.empty()) {
-            ambiguity_reported = false;
+            program = AInfo {};
+            wait_shown = false;
+        } else if (a_pids.empty()) {
+            many_a_shown = false;
             if (program.pid > 0) {
-                finish_monitoring(program, program_path, own_log);
-            } else if (!waiting_reported) {
+                stop_watch(program, c_log);
+            } else if (!wait_shown) {
                 std::cout << "Ожидание программы A.\n";
-                waiting_reported = true;
+                wait_shown = true;
             }
         } else {
-            ambiguity_reported = false;
-            waiting_reported = false;
-            if (program.pid > 0 && program.pid != matches[0]) {
-                finish_monitoring(program, program_path, own_log);
+            many_a_shown = false;
+            wait_shown = false;
+            if (program.pid > 0 && program.pid != a_pids[0]) {
+                stop_watch(program, c_log);
             }
             if (program.pid < 0) {
-                attach_to_program_a(matches[0], program, own_log);
+                watch_a(a_pids[0], program, c_log);
             }
-            if (program.pid == matches[0]) {
-                read_new_a_log_lines(program, program_path, own_log);
+            if (program.pid == a_pids[0]) {
+                read_new_log(program, c_log);
             }
         }
 
